@@ -53,8 +53,13 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import platform.CoreBluetooth.CBCentralManagerState
 import platform.CoreBluetooth.CBCentralManagerStatePoweredOff
 import platform.CoreBluetooth.CBCentralManagerStatePoweredOn
+import platform.CoreBluetooth.CBCentralManagerStateResetting
+import platform.CoreBluetooth.CBCentralManagerStateUnauthorized
+import platform.CoreBluetooth.CBCentralManagerStateUnknown
+import platform.CoreBluetooth.CBCentralManagerStateUnsupported
 import platform.CoreBluetooth.CBCharacteristicWriteType
 import platform.CoreBluetooth.CBCharacteristicWriteWithResponse
 import platform.CoreBluetooth.CBCharacteristicWriteWithoutResponse
@@ -226,11 +231,8 @@ public class ApplePeripheral internal constructor(
 
     public override suspend fun connect() {
         // Check CBCentral State since connecting can result in an api misuse message
-        if (centralManager.delegate.state.value == CBCentralManagerStatePoweredOn) {
-            connectJob.updateAndGet { it ?: connectAsync() }!!.await()
-        } else {
-            throw NotReadyException("Attempted to connect to device before Bluetooth is powered on")
-        }
+        centralManager.checkBluetoothState(CBCentralManagerStatePoweredOn)
+        connectJob.updateAndGet { it ?: connectAsync() }!!.await()
     }
 
     public override suspend fun disconnect() {
@@ -435,4 +437,22 @@ private fun NSError.toStatus(): State.Disconnected.Status = when (code) {
     CBErrorConnectionLimitReached -> ConnectionLimitReached
     CBErrorEncryptionTimedOut -> EncryptionTimedOut
     else -> Unknown(code.toInt())
+}
+
+private fun CentralManager.checkBluetoothState(expected: CBCentralManagerState) {
+    val actual = delegate.state.value
+    if (expected != actual) {
+        fun nameFor(value: Number) = when (value) {
+            CBCentralManagerStatePoweredOff -> "PoweredOff"
+            CBCentralManagerStatePoweredOn -> "PoweredOn"
+            CBCentralManagerStateResetting -> "Resetting"
+            CBCentralManagerStateUnauthorized -> "Unauthorized"
+            CBCentralManagerStateUnknown -> "Unknown"
+            CBCentralManagerStateUnsupported -> "Unsupported"
+            else -> "Unknown"
+        }
+        val actualName = nameFor(actual)
+        val expectedName = nameFor(expected)
+        throw BluetoothDisabledException("Bluetooth state is $actualName ($actual), but $expectedName ($expected) was required.")
+    }
 }
